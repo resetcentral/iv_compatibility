@@ -1,0 +1,8 @@
+[package]
+name = "iv_compat"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+mysql = "25.0.1"
+configparser = "3.1.0"
