@@ -1,27 +1,14 @@
-use std::{error, fmt};
-
-#[derive(Debug)]
-struct UnsolvableError;
-
-impl fmt::Display for UnsolvableError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Unable to solve")
-    }
-}
-
-impl error::Error for UnsolvableError {}
-
 pub mod db {
     use mysql::{Pool, PooledConn};
-    use serde::{Deserialize, Serialize};
     use mysql::prelude::*;
     use configparser::ini::Ini;
     use std::collections::HashMap;
-    use crate::infusions::{Infusion, InfusionType};
+    use std::rc::Rc;
+    use crate::infusion::{CompatibilityData, Infusion, InfusionType};
 
-    pub fn connect_db() -> Pool {
+    pub fn connect_db(config_path: &str) -> Pool {
         let mut config = Ini::new();
-        config.load("./db.conf").expect("Failed to load DB config!");
+        config.load(config_path).expect("Failed to load DB config!");
         let host = config.get("db", "host").expect("host not in db.conf!");
         let db_name = config.get("db", "db_name").expect("db_name not in db.conf!");
         let user = config.get("db", "user").expect("user not in db.conf!");
@@ -33,36 +20,59 @@ pub mod db {
         pool
     }
 
-    pub fn get_infusions_by_id<'a>(conn: &mut PooledConn, ids: Vec<&u32>) -> HashMap<u32, Infusion<'a>> {
-        let results: Vec<Infusion> = conn
-            .exec_map(
-                "SELECT id, name, type WHERE id IN ?",
-                ids,
-            |(id, name, inf_type)| {
-                let inf_type = match inf_type {
-                    1 => InfusionType::Drug,
-                    2 => InfusionType::Solution,
-                    _ => panic!("Unknown infusion type")
-                };
-                Infusion::new(id, name, inf_type)
-            })
-            .expect("Failed loading infusion data from DB!");
+    pub fn load_infusions(conn: &mut PooledConn, ids: Vec<&u32>) -> HashMap<u32, Infusion> {
+        let mut infusion_map = HashMap::new();
 
-        let mut infusions = HashMap::new();
-        for infusion in results {
-            infusions.insert(infusion.get_id(), infusion);
+        // load basic infusion info
+        // no risk of SQL injection since we know all values are u32
+        let ids_param = ids.iter().map(|id| id.to_string()).collect::<Vec<_>>().join(",");
+        let results = conn
+            .query(format!("SELECT id, name, type FROM infusion WHERE id IN ({ids_param})"))
+            .expect("Failed loading infusion data from DB");
+
+        for (id, name, inf_type_id) in results {
+            let inf_type = match inf_type_id {
+                1 => InfusionType::Drug,
+                2 => InfusionType::Solution,
+                _ => panic!("Unknown infusion type")
+            };
+            let infusion = Infusion::new(id, name, inf_type);
+            infusion_map.insert(infusion.get_id(), infusion);
         }
 
-        println!("{:#?}", infusions);
+        println!("{:#?}", infusion_map);
 
-        infusions
+        // load infusion compatibility info
+        // no risk of SQL injection since we know all values are u32
+        let ids_param = infusion_map.keys().map(|i| { i.to_string() }).collect::<Vec<_>>().join(",");
+        let results = conn
+            .query(
+                format!(
+                    "SELECT infusion_a, infusion_b, compatible_results, incompatible_results, mixed_results
+                    FROM infusion_compatibility
+                    WHERE infusion_a IN ({ids_param}) AND infusion_b in ({ids_param})"
+                )
+            ).expect("Failed loading compatibility data from DB");
+
+        for (id1, id2, compatible, incompatible, mixed) in results {
+            let compat_data = Rc::new(CompatibilityData::new(compatible, incompatible, mixed));
+            
+            let infusion1 = infusion_map.get_mut(&id1).unwrap();
+            infusion1.add_compatibility_data(id2, &compat_data);
+
+            let infusion2 = infusion_map.get_mut(&id2).unwrap();
+            infusion2.add_compatibility_data(id1, &compat_data);
+        }
+
+        println!("{:#?}", infusion_map);
+
+        infusion_map
     }
 }
 
-pub mod infusions {
-    use serde::{Deserialize, Serialize};
-    use std::collections::{ HashMap, HashSet };
-    use std::hash::{Hash, Hasher};
+pub mod infusion {
+    use std::collections::HashMap;
+    use std::rc::Rc;
 
     #[derive(Debug)]
     pub enum InfusionType {
@@ -70,23 +80,23 @@ pub mod infusions {
         Solution
     }
 
-    #[derive(Clone, Copy, Debug)]
-    enum Compatibility {
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]            // let infusion1: &'a mut Infusion = infusions.get_mut(&id1).unwrap();
+    pub enum Compatibility {
         Compatible,
         Incompatible,
     }
 
     #[derive(Debug)]
-    struct CompatibilityData {
+    pub struct CompatibilityData {
         compatible: u32,
         incompatible: u32,
-        unknown: u32,
+        mixed: u32,
         compatibility: Compatibility,
     }
 
     impl CompatibilityData {
-        fn new(compatible: u32, incompatible: u32, unknown: u32) -> CompatibilityData {
-            let compatibility = if compatible > 0 && incompatible == 0 && unknown == 0 {
+        pub fn new(compatible: u32, incompatible: u32, mixed: u32) -> CompatibilityData {
+            let compatibility = if compatible > 0 && incompatible == 0 && mixed == 0 {
                 Compatibility::Compatible
             } else {
                 Compatibility::Incompatible
@@ -95,45 +105,27 @@ pub mod infusions {
             Self {
                 compatible,
                 incompatible,
-                unknown,
+                mixed,
                 compatibility,
             }
         }
     }
 
     #[derive(Debug)]
-    pub struct Infusion<'a> {
+    pub struct Infusion {
         id: u32,
         name: String,
         infusion_type: InfusionType,
-        compatibility: HashMap<u32, CompatibilityData>, // Infusion.id -> CompatibilityData
-        compatible: HashSet<&'a Infusion<'a>>,
-        incompatible: HashSet<&'a Infusion<'a>>,
+        compatibility: HashMap<u32, Rc<CompatibilityData>>, // Infusion.id -> CompatibilityData
     }
 
-    impl<'a> PartialEq for Infusion<'a> {
-        fn eq(&self, other: &Self) -> bool {
-            self.id == other.id
-        }
-    }
-
-    impl<'a> Eq for Infusion<'a> {}
-
-    impl<'a> Hash for Infusion<'a> {
-        fn hash<H: Hasher>(&self, state: &mut H) {
-            self.id.hash(state);
-        }
-    }
-
-    impl<'a> Infusion<'a> {
+    impl Infusion {
         pub fn new(id: u32, name: String, infusion_type: InfusionType) -> Self {
             Self {
                 id,
                 name,
                 infusion_type,
                 compatibility: HashMap::new(),
-                compatible: HashSet::new(),
-                incompatible: HashSet::new(),
             }
         }
 
@@ -141,75 +133,70 @@ pub mod infusions {
             self.id
         }
 
-        fn add_compatibility_data(&mut self, id1: u32, id2: u32, compat_data: CompatibilityData) {
-            let other_id = if id1 == self.id { id2 } else { id1 };
-
-            self.compatibility.insert(other_id, compat_data);
+        pub fn add_compatibility_data(&mut self, other_id: u32, compat_data: &Rc<CompatibilityData>) {
+            self.compatibility.insert(other_id, Rc::clone(compat_data));
         }
 
-        fn compute_compatibility(&mut self, infusions: HashSet<&'a Infusion<'a>>) {
-            for infusion in infusions {
-                let compat = if infusion.id == self.id {
-                    Compatibility::Compatible
-                } else {
-                    match self.compatibility.get(&infusion.id) {
-                        None => Compatibility::Incompatible,
-                        Some(c) => c.compatibility,
-                    }
-                };
-
-                match compat {
-                    Compatibility::Compatible => {
-                        self.compatible.insert(infusion);
-                    },
-                    Compatibility::Incompatible => {
-                        self.incompatible.insert(infusion);
-                    }
+        pub fn get_compatible(&self) -> impl Iterator<Item = &u32> {
+            self.compatibility.keys().filter(
+                |id| {
+                    let compat = self.compatibility.get(id).unwrap();
+                    compat.compatibility == Compatibility::Compatible
                 }
-            }
-        }
-
-        // fn compatible_with(&self, drug: &Infusion) -> &CompatibilityData {
-        //     self.compatibility.get(&drug.id).unwrap_or(&CompatibilityData::new(0,0,0))
-        // }
-    }
-
-    pub struct Iv<'a> {
-        infusions: HashSet<&'a Infusion<'a>>,
-    }
-
-    impl<'a> Iv<'a> {
-        pub fn new() -> Self {
-            Self {
-                infusions: HashSet::<&Infusion>::new(),
-            }
-        }
-
-        pub fn add_infusion(&mut self, new_infusion: &'a Infusion) {
-            // Would this be faster to check in the other direction?
-            for infusion in &self.infusions {
-                if !infusion.compatible.contains(new_infusion) {
-                    panic!("Attempted to add incompatible infusion to IV. Fix your code!");
-                }
-            }
-
-            self.infusions.insert(new_infusion);
+            )
         }
     }
 }
 
+pub mod solver {
+    use crate::infusion::Infusion;
+    use std::collections::{HashSet, HashMap};
+    use petgraph::graph::UnGraph;
+    use std::{error, fmt};
+
+    #[derive(Debug)]
+    struct UnsolvableError;
+
+    impl fmt::Display for UnsolvableError {
+        fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+            write!(f, "Unable to solve")
+        }
+    }
+
+    impl error::Error for UnsolvableError {}
 
 
+    #[derive(Debug)]
+    pub struct CompatibilityProblem {
+        num_ivs: u32,
+        ivs: Vec<HashSet<u32>>,
+        infusions: HashMap<u32, Infusion>,
+        graph: UnGraph<(), ()>
+    }
 
+    impl CompatibilityProblem {
+        pub fn new(num_ivs: u32, ivs: Vec<HashSet<u32>>, infusions: HashMap<u32, Infusion>) -> Self {
+            let edges = infusions
+                .values()
+                .map(|inf| {
+                    inf.get_compatible().map(
+                        |other_id| {
+                            (inf.get_id(), *other_id)
+                        }
+                    )
+                })
+                .flatten();
+            let graph = UnGraph::from_edges(edges);
 
-
-// fn solve_compatibility_even<'a>(ivs: Vec<Infusion>, infusions: Vec<Infusion>)
-//     -> Result<Vec<Infusion<'a>>, UnsolvableError> {
-    
-//     return Ok(vec![]);
-// }
-
-
+            Self {
+                num_ivs,
+                ivs,
+                infusions,
+                graph
+            }
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {

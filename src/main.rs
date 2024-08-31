@@ -1,3 +1,4 @@
+use iv_compat::solver::CompatibilityProblem;
 use serde::{Deserialize, Serialize};
 
 use mysql::{Pool, PooledConn};
@@ -6,17 +7,15 @@ use mysql::prelude::*;
 use axum::http::StatusCode;
 use axum::response::Html;
 use axum::{Router, routing::get };
-use axum::extract::{State};
+use axum::extract::State;
 use axum_extra::extract::Query;
 
 use tower_http::services::ServeDir;
 use minijinja::{Environment, context};
-use std::collections::HashMap;
+use std::collections::HashSet;
 use std::sync::Arc;
-use serde_urlencoded;
 
 use iv_compat::db;
-use iv_compat::infusions::{Infusion, Iv};
 
 async fn handler_home(state: State<Arc<AppState>>) -> Result<Html<String>, StatusCode> {
     #[derive(Serialize, Deserialize, Debug)]
@@ -45,56 +44,33 @@ async fn handler_home(state: State<Arc<AppState>>) -> Result<Html<String>, Statu
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-struct Params {
+struct ResultParams {
     num_ivs: u32,
     ivs: String,
     add: Vec<u32>
 }
 
-// impl Params {
-//     fn new(num_ivs: u32, ivs_json: &str, add: Vec<u32>) -> Self {
-//         Self {
-//             num_ivs,
-//             ivs: serde_json::from_str(ivs_json).unwrap(),
-//             add,
-//         }
-//     }
-// }
-
-async fn handler_results(state: State<Arc<AppState>>, params: Query<Params>) -> Result<Html<String>, StatusCode> {
-    // let data = vec![ vec![1,2,3], vec![4,5,6]];
-    // let add = vec![1,2,3];
-    // let params = Params {
-    //     num_ivs: 2,
-    //     ivs: serde_json::to_string(&data).unwrap(),
-    //     add: add
-    // };
+async fn handler_results(state: State<Arc<AppState>>, params: Query<ResultParams>) -> Result<Html<String>, StatusCode> {
     let mut conn = state.pool.get_conn().expect("Failed to connect to DB!");
     let iv_data: Vec<Vec<u32>>= serde_json::from_str(&params.ivs).expect("Invalid JSON data: ivs");
 
-    let infusion_ids = iv_data.iter().flatten().chain(params.add.iter());
+    let problem = load_problem(&mut conn, params.num_ivs, iv_data, &params.add);
+    println!("{:#?}", problem);
 
-    let infusions = db::get_infusions_by_id(&mut conn, infusion_ids.collect());
-    //db::get_compatibility()
+    Err(StatusCode::INTERNAL_SERVER_ERROR)
+}
 
-
-    let mut ivs = Vec::new();
-
-    for infusion_data in iv_data {
-        let mut iv = Iv::new();
-        for infusion_id in infusion_data {
-            iv.add_infusion(infusions.get(&infusion_id).unwrap());
+fn load_problem(conn: &mut PooledConn, num_ivs: u32, iv_data: Vec<Vec<u32>>, additional: &Vec<u32>) -> CompatibilityProblem {
+    let infusion_ids = iv_data.iter().flatten().chain(additional.iter()).collect();
+    let infusions = db::load_infusions(conn, infusion_ids);
+    
+    let ivs: Vec<HashSet<u32>> = iv_data.into_iter().map(
+        |iv_infusion_ids| {
+            HashSet::from_iter(iv_infusion_ids)
         }
-        ivs.push(iv);
-    }
+    ).collect();
 
-    let additional_infusions: Vec<&Infusion> = infusions.values().filter(|inf| params.add.contains(&inf.get_id())).collect();
-
-    // iv_compat::infusions::solve_compatibility(params.num_ivs, ivs, additional_infusions);
-
-    println!("{:#?}", params);
-
-    return Err(StatusCode::INTERNAL_SERVER_ERROR);
+    CompatibilityProblem::new(num_ivs, ivs, infusions)
 }
 
 struct AppState {
@@ -104,7 +80,7 @@ struct AppState {
 
 #[tokio::main]
 async fn main() {
-    let pool = db::connect_db();
+    let pool = db::connect_db("./db.conf");
 
     let mut env = Environment::new();
     env.add_template("home", include_str!("../templates/home.jinja")).expect("Failed to load template");
