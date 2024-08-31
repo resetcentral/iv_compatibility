@@ -48,17 +48,21 @@ function addInfusion(event) {
 
 function submitData() {
   let data = new FormData($("#input-form")[0]);
+  let num_ivs = Number(data.get("num-ivs"));
   let ivs = [];
-  for (const i of Array(data.get("num-ivs")).keys()) {
-    ivs.push(Array.from(data.getAll("iv-" + i)));
+  for (const i of Array(num_ivs).keys()) {
+    console.log(i);
+    ivs.push(Array.from(data.getAll("iv-" + i)).map(Number));
   }
 
   ivs = JSON.stringify(ivs);
 
   let parsedData = new FormData();
-  parsedData.append("num_ivs", data.get("num-ivs"));
+  parsedData.append("num_ivs", num_ivs);
   parsedData.append("ivs", ivs);
-  parsedData.append("add", data.getAll("add"));
+  for (const item of data.getAll("add")) {
+    parsedData.append("add", item);
+  }
   console.log(parsedData);
 
   queryString = new URLSearchParams(parsedData).toString();
