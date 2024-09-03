@@ -80,7 +80,7 @@ struct AppState {
 
 #[tokio::main]
 async fn main() {
-    let pool = db::connect_db("./db.conf");
+    let pool = db::connect_db("./conf.d/db.conf");
 
     let mut env = Environment::new();
     env.add_template("home", include_str!("../templates/home.jinja")).expect("Failed to load template");
