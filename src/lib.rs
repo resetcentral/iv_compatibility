@@ -306,15 +306,15 @@ pub mod solver {
         }
 
         fn init_coloring(&mut self, ivs: Vec<HashSet<u32>>) -> Result<(), ConflictError> {
+            let preset_nodes = ivs.iter().flatten().unique().collect_vec();
+            self.uncolored_nodes.retain(|n| { !preset_nodes.contains(&n) });
+
             for iv_infusions in &ivs {
                 let color = self.add_new_color();
-                
                 for node in iv_infusions {
                     self.color_node(*node, color)?;
                 }
             }
-            let preset_nodes = ivs.into_iter().flatten().unique().collect_vec();
-            self.uncolored_nodes.retain(|n| { !preset_nodes.contains(n) });
 
             Ok(())
         }
