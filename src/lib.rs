@@ -218,7 +218,7 @@ pub mod solver {
                 |n| {
                     let node_np = possible_colors.get(n).unwrap().len();
                     let node_au = adjacent_uncolored.get(n).unwrap();
-                    (node_np, *node_au)
+                    (-(node_np as i32), *node_au)
                 }
             )
         }
