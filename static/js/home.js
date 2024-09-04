@@ -66,5 +66,5 @@ function submitData() {
   console.log(parsedData);
 
   queryString = new URLSearchParams(parsedData).toString();
-  window.open("/results?" + queryString)
+  window.open("results?" + queryString)
 }
