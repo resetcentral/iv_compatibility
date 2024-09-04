@@ -37,7 +37,7 @@ pub mod db {
                 _ => panic!("Unknown infusion type")
             };
             let infusion = Infusion::new(id, name, inf_type);
-            infusion_map.insert(infusion.get_id(), infusion);
+            infusion_map.insert(infusion.id(), infusion);
         }
 
         // load infusion compatibility info
@@ -125,8 +125,12 @@ pub mod infusion {
             }
         }
 
-        pub fn get_id(&self) -> u32 {
+        pub fn id(&self) -> u32 {
             self.id
+        }
+
+        pub fn name(&self) -> &str {
+            &self.name
         }
 
         pub fn add_compatibility_data(&mut self, other_id: u32, compat_data: &Rc<CompatibilityData>) {
@@ -197,7 +201,7 @@ pub mod solver {
                 .map(|inf| {
                     inf.get_incompatible(&all_ids).into_iter().map(
                         |other_id| {
-                            (inf.get_id(), other_id)
+                            (inf.id(), other_id)
                         }
                     ).collect::<Vec<(u32, u32)>>()
                 })
@@ -237,7 +241,7 @@ pub mod solver {
                 .0
         }
 
-        pub fn solve(&self) {
+        pub fn solve(&self) -> HashMap<u32, Vec<&Infusion>> {
             let mut possible_colors = HashMap::new();
             let mut adjacent_uncolored = HashMap::new();
             let mut color_usage = HashMap::new();
@@ -293,9 +297,22 @@ pub mod solver {
                 for adj_node in adjacent_nodes {
                     *adjacent_uncolored.get_mut(&adj_node).unwrap() -= 1;
                 }
-                println!("{:#?}", color_usage);
+                println!("{:#?}", color_usage);    
             }
-            
+
+            // Convert infusion IDs to names
+            let mut output = HashMap::new();
+            for (iv, inf_id_list) in color_usage.into_iter() {
+                let iv_infusions = inf_id_list
+                    .into_iter()
+                    .map(|inf_id| {
+                        self.infusions.get(&inf_id).unwrap()
+                    })
+                    .collect_vec();
+                output.insert(iv, iv_infusions);
+            }
+
+            output
         }
     }
 }
