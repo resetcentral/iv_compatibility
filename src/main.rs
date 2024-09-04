@@ -80,7 +80,7 @@ async fn handler_results(state: State<Arc<AppState>>, params: Query<ResultParams
         Err(error) => {
             let template = state.env.get_template("results_error").expect("Template not found");
             let rendered = template
-                .render(context!(iv => error.iv, conflicting_items => error.conflicting_items))
+                .render(context!(iv => error.iv+1, conflicting_items => error.conflicting_items))
                 .expect("Unable to render error page");
 
             let response = Response::builder()
