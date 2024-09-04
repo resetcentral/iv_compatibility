@@ -190,10 +190,12 @@ pub mod solver {
         ivs: Vec<HashSet<u32>>,
         infusions: HashMap<u32, Infusion>,
         graph: UnGraphMap<u32, ()>,
+        uncolored_nodes: Vec<u32>,
         possible_colors: HashMap<u32, HashSet<u32>>,    // node -> set of possible colors
         adjacent_uncolored: HashMap<u32, u32>,          // node -> number of uncolored adjacent nodes
         color_usage: HashMap<u32, Vec<u32>>,            // color -> list of nodes with that color
         color_max_count: HashMap<u32, u32>,             // color -> max number of nodes which _could_ use that color
+        colors_count: u32,
     }
 
     impl CompatibilityProblem {
@@ -212,21 +214,24 @@ pub mod solver {
                 .flatten();
 
             let graph = UnGraphMap::from_edges(edges);
+            let uncolored_nodes = graph.nodes().collect();
 
             Self {
                 num_ivs,
                 ivs,
                 infusions,
                 graph,
+                uncolored_nodes,
                 possible_colors: HashMap::new(),
                 adjacent_uncolored: HashMap::new(),
                 color_usage: HashMap::new(),
                 color_max_count: HashMap::new(),
+                colors_count: 0,
             }
         }
 
-        fn sort_nodes(&self, nodes: &mut Vec<u32>) {
-            nodes.sort_unstable_by_key(
+        fn sort_nodes(&mut self) {
+            self.uncolored_nodes.sort_unstable_by_key(
                 |n| {
                     let node_np = self.possible_colors.get(n).unwrap().len();
                     let node_au = self.adjacent_uncolored.get(n).unwrap();
@@ -235,7 +240,7 @@ pub mod solver {
             )
         }
 
-        fn select_color(&self, node_colors: &HashSet<u32>, num_nodes_left: usize) -> u32 {
+        fn select_color(&self, node_colors: &HashSet<u32>) -> u32 {
             *node_colors
                 .into_iter()
                 .map(|color| {
@@ -250,19 +255,16 @@ pub mod solver {
         }
 
         pub fn solve(&mut self) -> HashMap<u32, Vec<&Infusion>> {
-            let mut colors_count = 0;
-
-            let mut nodes_left: Vec<u32> = self.graph.nodes().collect();
-            for node in &nodes_left {
+            for node in &self.uncolored_nodes {
                 self.possible_colors.insert(*node, HashSet::new());
                 self.adjacent_uncolored.insert(*node, self.graph.neighbors(*node).collect::<Vec<_>>().len() as u32);
             }
 
-            while nodes_left.len() > 0 {
-                self.sort_nodes(&mut nodes_left);
-                println!("{:?}", nodes_left);
+            while self.uncolored_nodes.len() > 0 {
+                self.sort_nodes();
+                println!("{:?}", self.uncolored_nodes);
 
-                let node = nodes_left.pop().unwrap();
+                let node = self.uncolored_nodes.pop().unwrap();
                 let node_colors = self.possible_colors.get(&node).unwrap();
 
                 println!("Picked Node: {:?}", node);
@@ -274,18 +276,18 @@ pub mod solver {
                 let color;
                 // let mut color = colors_count;
                 if node_colors.is_empty() {
-                    color = colors_count;
+                    color = self.colors_count;
                     self.color_usage.insert(color, vec![node]);
-                    colors_count += 1;
+                    self.colors_count += 1;
 
                     // Update non-adjacent nodes with the possibility of the new color
-                    let non_adjacent_uncolored = nodes_left.iter().filter(|n| { !adjacent_nodes.contains(n)}).collect_vec();
+                    let non_adjacent_uncolored = self.uncolored_nodes.iter().filter(|n| { !adjacent_nodes.contains(n)}).collect_vec();
                     self.color_max_count.insert(color, non_adjacent_uncolored.len() as u32);
                     for non_adj_node in non_adjacent_uncolored {
                         self.possible_colors.get_mut(non_adj_node).unwrap().insert(color);
                     }
                 } else {
-                    color = self.select_color(node_colors, nodes_left.len());
+                    color = self.select_color(node_colors);
                     self.color_usage.get_mut(&color).unwrap().push(node);
                     // Remove possibility of this color from adjacent nodes
                     for adj_node in &adjacent_nodes {
