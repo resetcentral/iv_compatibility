@@ -78,7 +78,7 @@ async fn handler_results(state: State<Arc<AppState>>, params: Query<ResultParams
             Html(rendered).into_response()
         },
         Err(error) => {
-            let template = state.env.get_template("result_error").expect("Template not found");
+            let template = state.env.get_template("results_error").expect("Template not found");
             let rendered = template
                 .render(context!(iv => error.iv, conflicting_items => error.conflicting_items))
                 .expect("Unable to render error page");
@@ -114,6 +114,7 @@ async fn main() {
     let mut env = Environment::new();
     env.add_template("home", include_str!("../templates/home.jinja")).expect("Failed to load template");
     env.add_template("results", include_str!("../templates/results.jinja")).expect("Failed to load template");
+    env.add_template("results_error", include_str!("../templates/results_error.jinja")).expect("Failed to load template");
 
     let app_state = Arc::new(AppState { env, pool });
     let app = Router::new()
