@@ -313,6 +313,7 @@ pub mod solver {
                 let color = self.add_new_color();
                 for node in iv_infusions {
                     self.color_node(*node, color)?;
+                    *self.color_max_count.get_mut(&color).unwrap() += 1;
                 }
             }
 
