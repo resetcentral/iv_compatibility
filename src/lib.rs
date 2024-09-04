@@ -218,14 +218,23 @@ pub mod solver {
                 |n| {
                     let node_np = possible_colors.get(n).unwrap().len();
                     let node_au = adjacent_uncolored.get(n).unwrap();
-                    (node_np,
-                    *node_au)
+                    (node_np, *node_au)
                 }
             )
         }
 
         fn select_color(node_colors: &HashSet<u32>, color_usage: &HashMap<u32, Vec<u32>>, color_possibilities: &HashMap<u32, usize>, num_nodes_left: usize) -> u32 {
-            *node_colors.iter().next().unwrap()
+            *node_colors
+                .into_iter()
+                .map(|color| {
+                    let num_used = color_usage.get(color).unwrap().len();
+                    let num_possible = *color_possibilities.get(color).unwrap();
+                    (color, num_used + num_possible)
+                })
+                .sorted_by_key(|c| { c.1 })
+                .collect_vec()
+                .pop().unwrap()
+                .0
         }
 
         pub fn solve(&self) {
