@@ -55,7 +55,7 @@ async fn handler_results(state: State<Arc<AppState>>, params: Query<ResultParams
     let iv_data: Vec<Vec<u32>>= serde_json::from_str(&params.ivs).expect("Invalid JSON data: ivs");
 
     let problem = load_problem(&mut conn, params.num_ivs, iv_data, &params.add);
-    println!("{:#?}", problem);
+    problem.solve();
 
     Err(StatusCode::INTERNAL_SERVER_ERROR)
 }

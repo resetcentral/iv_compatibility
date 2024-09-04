@@ -40,8 +40,6 @@ pub mod db {
             infusion_map.insert(infusion.get_id(), infusion);
         }
 
-        println!("{:#?}", infusion_map);
-
         // load infusion compatibility info
         // no risk of SQL injection since we know all values are u32
         let ids_param = infusion_map.keys().map(|i| { i.to_string() }).collect::<Vec<_>>().join(",");
@@ -63,8 +61,6 @@ pub mod db {
             let infusion2 = infusion_map.get_mut(&id2).unwrap();
             infusion2.add_compatibility_data(id1, &compat_data);
         }
-
-        println!("{:#?}", infusion_map);
 
         infusion_map
     }
@@ -145,13 +141,31 @@ pub mod infusion {
                 }
             )
         }
+
+        
+
+        pub fn get_incompatible(&self, all_ids: &Vec<&u32>) -> Vec<u32> {
+            let compat: Vec<_> = self.get_compatible().map(|i| { i.clone() }).collect();
+            let mut incompat = Vec::new();
+
+            for id in all_ids {
+                let id = *id;
+                if !compat.contains(id) {
+                    incompat.push(id.clone());
+                }
+            }
+            
+            incompat
+        }
     }
+    use std::ops::Range;
 }
 
 pub mod solver {
     use crate::infusion::Infusion;
-    use std::collections::{HashSet, HashMap};
-    use petgraph::graph::UnGraph;
+    use std::{collections::{HashMap, HashSet}, hash::Hash};
+    use itertools::Itertools;
+    use petgraph::prelude::*;
     use std::{error, fmt};
 
     #[derive(Debug)]
@@ -171,22 +185,25 @@ pub mod solver {
         num_ivs: u32,
         ivs: Vec<HashSet<u32>>,
         infusions: HashMap<u32, Infusion>,
-        graph: UnGraph<(), ()>
+        graph: UnGraphMap<u32, ()>
     }
 
     impl CompatibilityProblem {
         pub fn new(num_ivs: u32, ivs: Vec<HashSet<u32>>, infusions: HashMap<u32, Infusion>) -> Self {
+            let all_ids = infusions.keys().collect();
+            println!("{:?}", all_ids);
             let edges = infusions
                 .values()
                 .map(|inf| {
-                    inf.get_compatible().map(
+                    inf.get_incompatible(&all_ids).into_iter().map(
                         |other_id| {
-                            (inf.get_id(), *other_id)
+                            (inf.get_id(), other_id)
                         }
-                    )
+                    ).collect::<Vec<(u32, u32)>>()
                 })
                 .flatten();
-            let graph = UnGraph::from_edges(edges);
+
+            let graph = UnGraphMap::from_edges(edges);
 
             Self {
                 num_ivs,
@@ -194,6 +211,82 @@ pub mod solver {
                 infusions,
                 graph
             }
+        }
+
+        fn sort_nodes(nodes: &mut Vec<u32>, possible_colors: &HashMap<u32, HashSet<u32>>, adjacent_uncolored: &HashMap<u32, usize>) {
+            nodes.sort_unstable_by_key(
+                |n| {
+                    let node_np = possible_colors.get(n).unwrap().len();
+                    let node_au = adjacent_uncolored.get(n).unwrap();
+                    (node_np,
+                    *node_au)
+                }
+            )
+        }
+
+        fn select_color(node_colors: &HashSet<u32>, color_usage: &HashMap<u32, Vec<u32>>, color_possibilities: &HashMap<u32, usize>, num_nodes_left: usize) -> u32 {
+            *node_colors.iter().next().unwrap()
+        }
+
+        pub fn solve(&self) {
+            let mut possible_colors = HashMap::new();
+            let mut adjacent_uncolored = HashMap::new();
+            let mut color_usage = HashMap::new();
+            let mut color_possibilities = HashMap::new();
+            let mut colors_count = 0;
+
+            let mut nodes_left: Vec<u32> = self.graph.nodes().collect();
+            for node in &nodes_left {
+                possible_colors.insert(*node, HashSet::new());
+                adjacent_uncolored.insert(*node, self.graph.neighbors(*node).collect::<Vec<_>>().len());
+            }
+
+            while nodes_left.len() > 0 {
+                Self::sort_nodes(&mut nodes_left, &possible_colors, &adjacent_uncolored);
+                println!("{:?}", nodes_left);
+
+                let node = nodes_left.pop().unwrap();
+                let node_colors = possible_colors.get(&node).unwrap();
+
+                println!("Picked Node: {:?}", node);
+                println!("Colors: {:?}", node_colors);
+
+                let adjacent_nodes = self.graph.neighbors(node).collect_vec();
+
+                // Pick a color
+                let color;
+                // let mut color = colors_count;
+                if node_colors.is_empty() {
+                    color = colors_count;
+                    color_usage.insert(color, vec![node]);
+                    colors_count += 1;
+
+                    // Update non-adjacent nodes with the possibility of the new color
+                    let non_adjacent_uncolored = nodes_left.iter().filter(|n| { !adjacent_nodes.contains(n)}).collect_vec();
+                    color_possibilities.insert(color, non_adjacent_uncolored.len());
+                    for non_adj_node in non_adjacent_uncolored {
+                        possible_colors.get_mut(non_adj_node).unwrap().insert(color);
+                    }
+                } else {
+                    color = Self::select_color(node_colors ,&color_usage, &color_possibilities, nodes_left.len());
+                    color_usage.get_mut(&color).unwrap().push(node);
+                    // Remove possibility of this color from adjacent nodes
+                    for adj_node in &adjacent_nodes {
+                        if let Some(color_set) = possible_colors.get_mut(adj_node) {
+                            if color_set.remove(&color) {
+                                *color_possibilities.get_mut(&color).unwrap() -= 1;
+                            }
+                        }
+                    }
+                }
+
+                // Update metrics for adjacent nodes
+                for adj_node in adjacent_nodes {
+                    *adjacent_uncolored.get_mut(&adj_node).unwrap() -= 1;
+                }
+                println!("{:#?}", color_usage);
+            }
+            
         }
     }
 }
