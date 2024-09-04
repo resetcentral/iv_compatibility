@@ -50,6 +50,7 @@ async fn handler_home(state: State<Arc<AppState>>) -> Result<Html<String>, Statu
 struct ResultParams {
     num_ivs: u32,
     ivs: String,
+    #[serde(default)] // allow for add= not in query string
     add: Vec<u32>
 }
 
