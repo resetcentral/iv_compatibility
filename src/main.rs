@@ -1,3 +1,4 @@
+use itertools::Itertools;
 use iv_compat::solver::CompatibilityProblem;
 use serde::{Deserialize, Serialize};
 
@@ -55,9 +56,26 @@ async fn handler_results(state: State<Arc<AppState>>, params: Query<ResultParams
     let iv_data: Vec<Vec<u32>>= serde_json::from_str(&params.ivs).expect("Invalid JSON data: ivs");
 
     let problem = load_problem(&mut conn, params.num_ivs, iv_data, &params.add);
-    problem.solve();
+    let results = problem.solve();
 
-    Err(StatusCode::INTERNAL_SERVER_ERROR)
+    let template = state.env.get_template("results").expect("Template not found!");
+
+    let ivs_param = results
+        .into_iter()
+        .map(|(iv_id, iv_infusions)| {
+            (iv_id, iv_infusions.into_iter().map(|inf| { inf.name() }).collect_vec())
+        })
+        .sorted_by_key(|iv| { iv.0 })
+        .collect_vec();
+    
+    let rendered = template
+        .render(context!(ivs => ivs_param))
+        .expect("Unable to render results page");
+
+    Ok(Html(rendered))
+
+
+    // Err(StatusCode::INTERNAL_SERVER_ERROR)
 }
 
 fn load_problem(conn: &mut PooledConn, num_ivs: u32, iv_data: Vec<Vec<u32>>, additional: &Vec<u32>) -> CompatibilityProblem {
@@ -84,6 +102,7 @@ async fn main() {
 
     let mut env = Environment::new();
     env.add_template("home", include_str!("../templates/home.jinja")).expect("Failed to load template");
+    env.add_template("results", include_str!("../templates/results.jinja")).expect("Failed to load template");
 
     let app_state = Arc::new(AppState { env, pool });
     let app = Router::new()
