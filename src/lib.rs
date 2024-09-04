@@ -146,8 +146,6 @@ pub mod infusion {
             )
         }
 
-        
-
         pub fn get_incompatible(&self, all_ids: &Vec<&u32>) -> Vec<u32> {
             let compat: Vec<_> = self.get_compatible().map(|i| { i.clone() }).collect();
             let mut incompat = Vec::new();
@@ -162,32 +160,32 @@ pub mod infusion {
             incompat
         }
     }
-    use std::ops::Range;
 }
 
 pub mod solver {
     use crate::infusion::Infusion;
-    use std::{collections::{HashMap, HashSet}, hash::Hash};
+    use std::collections::{HashMap, HashSet};
     use itertools::Itertools;
     use petgraph::prelude::*;
     use std::{error, fmt};
 
     #[derive(Debug)]
-    struct UnsolvableError;
+    pub struct ConflictError {
+        pub iv: u32,
+        pub conflicting_items: (String, String)
+    }
 
-    impl fmt::Display for UnsolvableError {
+    impl fmt::Display for ConflictError {
         fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-            write!(f, "Unable to solve")
+            write!(f, "There are incompatible infusions in IV #{}", self.iv + 1)
         }
     }
 
-    impl error::Error for UnsolvableError {}
+    impl error::Error for ConflictError {}
 
 
     #[derive(Debug)]
     pub struct CompatibilityProblem {
-        num_ivs: u32,
-        ivs: Vec<HashSet<u32>>,
         infusions: HashMap<u32, Infusion>,
         graph: UnGraphMap<u32, ()>,
         uncolored_nodes: Vec<u32>,
@@ -195,11 +193,11 @@ pub mod solver {
         adjacent_uncolored: HashMap<u32, u32>,          // node -> number of uncolored adjacent nodes
         color_usage: HashMap<u32, Vec<u32>>,            // color -> list of nodes with that color
         color_max_count: HashMap<u32, u32>,             // color -> max number of nodes which _could_ use that color
-        colors_count: u32,
+        colors: Vec<u32>,
     }
 
     impl CompatibilityProblem {
-        pub fn new(num_ivs: u32, ivs: Vec<HashSet<u32>>, infusions: HashMap<u32, Infusion>) -> Self {
+        pub fn new(infusions: HashMap<u32, Infusion>) -> Self {
             let all_ids = infusions.keys().collect();
             println!("{:?}", all_ids);
             let edges = infusions
@@ -214,19 +212,23 @@ pub mod solver {
                 .flatten();
 
             let graph = UnGraphMap::from_edges(edges);
-            let uncolored_nodes = graph.nodes().collect();
+            let uncolored_nodes = graph.nodes().collect_vec();
+            let mut possible_colors = HashMap::new();
+            let mut adjacent_uncolored = HashMap::new();
+            for node in uncolored_nodes.iter() {
+                possible_colors.insert(*node, HashSet::new());
+                adjacent_uncolored.insert(*node, graph.neighbors(*node).collect::<Vec<_>>().len() as u32);
+            }
 
             Self {
-                num_ivs,
-                ivs,
                 infusions,
                 graph,
                 uncolored_nodes,
-                possible_colors: HashMap::new(),
-                adjacent_uncolored: HashMap::new(),
+                possible_colors,
+                adjacent_uncolored,
                 color_usage: HashMap::new(),
                 color_max_count: HashMap::new(),
-                colors_count: 0,
+                colors: Vec::new(),
             }
         }
 
@@ -254,11 +256,69 @@ pub mod solver {
                 .0
         }
 
-        pub fn solve(&mut self) -> HashMap<u32, Vec<&Infusion>> {
+        fn add_new_color(&mut self) -> u32 {
+            let color = self.colors.len() as u32;
+            self.colors.push(color);
+            self.color_usage.insert(color, Vec::new());
+
+            self.color_max_count.insert(color, self.uncolored_nodes.len() as u32);
             for node in &self.uncolored_nodes {
-                self.possible_colors.insert(*node, HashSet::new());
-                self.adjacent_uncolored.insert(*node, self.graph.neighbors(*node).collect::<Vec<_>>().len() as u32);
+                self.possible_colors.get_mut(node).unwrap().insert(color);
             }
+
+            color
+        }
+
+        fn color_node(&mut self, node: u32, color: u32) -> Result<(), ConflictError> {
+            let adjacent_nodes = self.graph.neighbors(node).collect_vec();
+            // Check that node is allowed to be this color
+            for adj_node in &adjacent_nodes {
+                if self.color_usage.get(&color).unwrap().contains(adj_node) {
+                    let name1 = self.infusions.get(&node).unwrap().name().to_string();
+                    let name2 = self.infusions.get(adj_node).unwrap().name().to_string();
+                    return Err(ConflictError { iv: color, conflicting_items: (name1, name2) });
+                }
+            }
+
+            self.color_usage.get_mut(&color).unwrap().push(node);
+            
+            // Update color counts
+            for other_color in self.possible_colors.get(&node).unwrap() {
+                if color != *other_color {
+                    *self.color_max_count.get_mut(other_color).unwrap() -= 1;
+                }
+            }
+
+            // Remove possibility of this color from adjacent nodes
+            for adj_node in &adjacent_nodes {
+                let color_set = self.possible_colors.get_mut(adj_node).unwrap();
+                if color_set.remove(&color) {
+                    *self.color_max_count.get_mut(&color).unwrap() -= 1;
+                }
+            }
+
+            // Update metrics for adjacent nodes
+            for adj_node in &adjacent_nodes {
+                *self.adjacent_uncolored.get_mut(adj_node).unwrap() -= 1;
+            }
+
+            Ok(())
+        }
+
+        fn init_coloring(&mut self, ivs: Vec<HashSet<u32>>) -> Result<(), ConflictError> {
+            for iv_infusions in ivs {
+                let color = self.add_new_color();
+                
+                for node in iv_infusions {
+                    self.color_node(node, color)?;
+                }
+            }
+
+            Ok(())
+        }
+
+        pub fn solve(&mut self, ivs: Vec<HashSet<u32>>) -> Result<HashMap<u32, Vec<&Infusion>>, ConflictError> {
+            self.init_coloring(ivs)?;
 
             while self.uncolored_nodes.len() > 0 {
                 self.sort_nodes();
@@ -268,41 +328,13 @@ pub mod solver {
                 let node_colors = self.possible_colors.get(&node).unwrap();
 
                 println!("Picked Node: {:?}", node);
-                println!("Colors: {:?}", node_colors);
-
-                let adjacent_nodes = self.graph.neighbors(node).collect_vec();
+                println!("Possible Colors: {:?}", node_colors);
 
                 // Pick a color
-                let color;
-                // let mut color = colors_count;
-                if node_colors.is_empty() {
-                    color = self.colors_count;
-                    self.color_usage.insert(color, vec![node]);
-                    self.colors_count += 1;
+                let color = if node_colors.is_empty() { self.add_new_color() } else { self.select_color(node_colors) };
 
-                    // Update non-adjacent nodes with the possibility of the new color
-                    let non_adjacent_uncolored = self.uncolored_nodes.iter().filter(|n| { !adjacent_nodes.contains(n)}).collect_vec();
-                    self.color_max_count.insert(color, non_adjacent_uncolored.len() as u32);
-                    for non_adj_node in non_adjacent_uncolored {
-                        self.possible_colors.get_mut(non_adj_node).unwrap().insert(color);
-                    }
-                } else {
-                    color = self.select_color(node_colors);
-                    self.color_usage.get_mut(&color).unwrap().push(node);
-                    // Remove possibility of this color from adjacent nodes
-                    for adj_node in &adjacent_nodes {
-                        if let Some(color_set) = self.possible_colors.get_mut(adj_node) {
-                            if color_set.remove(&color) {
-                                *self.color_max_count.get_mut(&color).unwrap() -= 1;
-                            }
-                        }
-                    }
-                }
+                self.color_node(node, color)?;
 
-                // Update metrics for adjacent nodes
-                for adj_node in adjacent_nodes {
-                    *self.adjacent_uncolored.get_mut(&adj_node).unwrap() -= 1;
-                }
                 println!("{:#?}", self.color_usage);    
             }
 
@@ -318,7 +350,7 @@ pub mod solver {
                 output.insert(*iv, iv_infusions);
             }
 
-            output
+            Ok(output)
         }
     }
 }

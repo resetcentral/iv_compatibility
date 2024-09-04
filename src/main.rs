@@ -7,6 +7,8 @@ use mysql::prelude::*;
 
 use axum::http::StatusCode;
 use axum::response::Html;
+use axum::response::{Response, IntoResponse};
+use axum::body::Body;
 use axum::{Router, routing::get };
 use axum::extract::State;
 use axum_extra::extract::Query;
@@ -51,44 +53,53 @@ struct ResultParams {
     add: Vec<u32>
 }
 
-async fn handler_results(state: State<Arc<AppState>>, params: Query<ResultParams>) -> Result<Html<String>, StatusCode> {
+async fn handler_results(state: State<Arc<AppState>>, params: Query<ResultParams>) -> Response {
     let mut conn = state.pool.get_conn().expect("Failed to connect to DB!");
-    let iv_data: Vec<Vec<u32>>= serde_json::from_str(&params.ivs).expect("Invalid JSON data: ivs");
+    let ivs: Vec<HashSet<u32>>= serde_json::from_str(&params.ivs).expect("Invalid JSON data: ivs");
 
-    let problem = load_problem(&mut conn, params.num_ivs, iv_data, &params.add);
-    let results = problem.solve();
+    let mut problem = load_problem(&mut conn, &ivs, &params.add);
 
-    let template = state.env.get_template("results").expect("Template not found!");
+    match problem.solve(ivs) {
+        Ok(results) => {
+            let template = state.env.get_template("results").expect("Template not found!");
 
-    let ivs_param = results
-        .into_iter()
-        .map(|(iv_id, iv_infusions)| {
-            (iv_id, iv_infusions.into_iter().map(|inf| { inf.name() }).collect_vec())
-        })
-        .sorted_by_key(|iv| { iv.0 })
-        .collect_vec();
-    
-    let rendered = template
-        .render(context!(ivs => ivs_param))
-        .expect("Unable to render results page");
+            let ivs_param = results
+                .into_iter()
+                .map(|(iv_id, iv_infusions)| {
+                    (iv_id, iv_infusions.into_iter().map(|inf| { inf.name() }).collect_vec())
+                })
+                .sorted_by_key(|iv| { iv.0 })
+                .collect_vec();
+            
+            let rendered = template
+                .render(context!(ivs => ivs_param))
+                .expect("Unable to render results page");
 
-    Ok(Html(rendered))
+            Html(rendered).into_response()
+        },
+        Err(error) => {
+            let template = state.env.get_template("result_error").expect("Template not found");
+            let rendered = template
+                .render(context!(iv => error.iv, conflicting_items => error.conflicting_items))
+                .expect("Unable to render error page");
 
+            let response = Response::builder()
+                .status(StatusCode::UNPROCESSABLE_ENTITY)
+                .body(Body::from(rendered))
+                .expect("Failed to build error response");
+
+            response
+        }
+    }
 
     // Err(StatusCode::INTERNAL_SERVER_ERROR)
 }
 
-fn load_problem(conn: &mut PooledConn, num_ivs: u32, iv_data: Vec<Vec<u32>>, additional: &Vec<u32>) -> CompatibilityProblem {
+fn load_problem(conn: &mut PooledConn, iv_data: &Vec<HashSet<u32>>, additional: &Vec<u32>) -> CompatibilityProblem {
     let infusion_ids = iv_data.iter().flatten().chain(additional.iter()).collect();
     let infusions = db::load_infusions(conn, infusion_ids);
-    
-    let ivs: Vec<HashSet<u32>> = iv_data.into_iter().map(
-        |iv_infusion_ids| {
-            HashSet::from_iter(iv_infusion_ids)
-        }
-    ).collect();
 
-    CompatibilityProblem::new(num_ivs, ivs, infusions)
+    CompatibilityProblem::new(infusions)
 }
 
 struct AppState {
