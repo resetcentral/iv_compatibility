@@ -51,7 +51,6 @@ function submitData() {
   let num_ivs = Number(data.get("num-ivs"));
   let ivs = [];
   for (const i of Array(num_ivs).keys()) {
-    console.log(i);
     ivs.push(Array.from(data.getAll("iv-" + i)).map(Number));
   }
 
@@ -63,8 +62,7 @@ function submitData() {
   for (const item of data.getAll("add")) {
     parsedData.append("add", item);
   }
-  console.log(parsedData);
 
   queryString = new URLSearchParams(parsedData).toString();
-  window.open("results?" + queryString)
+  window.open("results?" + queryString, "_self");
 }
