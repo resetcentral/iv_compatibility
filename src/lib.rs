@@ -76,7 +76,7 @@ pub mod infusion {
         Solution
     }
 
-    #[derive(Clone, Copy, Debug, PartialEq, Eq)]            // let infusion1: &'a mut Infusion = infusions.get_mut(&id1).unwrap();
+    #[derive(Debug, PartialEq, Eq)]
     pub enum Compatibility {
         Compatible,
         Incompatible,
@@ -199,7 +199,6 @@ pub mod solver {
     impl CompatibilityProblem {
         pub fn new(infusions: HashMap<u32, Infusion>) -> Self {
             let all_ids = infusions.keys().collect();
-            println!("{:?}", all_ids);
             let edges = infusions
                 .values()
                 .map(|inf| {
@@ -233,6 +232,9 @@ pub mod solver {
         }
 
         fn sort_nodes(&mut self) {
+            // Sort nodes by number of possible colors descending,
+            // then number of adjacent uncolored nodes ascending
+            // the most preferred node is at the end of the list for easy .pop() access
             self.uncolored_nodes.sort_unstable_by_key(
                 |n| {
                     let node_np = self.possible_colors.get(n).unwrap().len();
@@ -246,7 +248,6 @@ pub mod solver {
             *node_colors
                 .into_iter()
                 .map(|color| {
-                    //let num_used = self.color_usage.get(color).unwrap().len();
                     let num_possible = *self.color_max_count.get(color).unwrap();
                     (color, num_possible)
                 })
@@ -330,15 +331,12 @@ pub mod solver {
                 let node = self.uncolored_nodes.pop().unwrap();
                 let node_colors = self.possible_colors.get(&node).unwrap();
 
-                println!("Picked Node: {:?}", node);
-                println!("Possible Colors: {:?}", node_colors);
-
                 // Pick a color
                 let color = if node_colors.is_empty() { self.add_new_color() } else { self.select_color(node_colors) };
 
                 self.color_node(node, color)?;
 
-                println!("{:#?}", self.color_usage);    
+                println!("{:?}", self.color_usage);    
             }
 
             // Convert infusion IDs to names
@@ -355,15 +353,5 @@ pub mod solver {
 
             Ok(output)
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn todo() {
-        assert_eq!(3, 4);
     }
 }

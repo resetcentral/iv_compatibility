@@ -6,8 +6,7 @@ use mysql::{Pool, PooledConn};
 use mysql::prelude::*;
 
 use axum::http::StatusCode;
-use axum::response::Html;
-use axum::response::{Response, IntoResponse};
+use axum::response::{Html, Response, IntoResponse};
 use axum::body::Body;
 use axum::{Router, routing::get };
 use axum::extract::State;
@@ -92,8 +91,6 @@ async fn handler_results(state: State<Arc<AppState>>, params: Query<ResultParams
             response
         }
     }
-
-    // Err(StatusCode::INTERNAL_SERVER_ERROR)
 }
 
 fn load_problem(conn: &mut PooledConn, iv_data: &Vec<HashSet<u32>>, additional: &Vec<u32>) -> CompatibilityProblem {
