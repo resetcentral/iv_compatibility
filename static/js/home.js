@@ -13,7 +13,7 @@ function updateIvCount() {
       let newIv = firstIv.clone();
       let title = newIv.find(".iv-title")
       title.text("IV #" + (i+1));
-      let ivInputs = newIv.find(".infusion-input select");
+      let ivInputs = newIv.find(".infusion-input");
       let select = ivInputs.first();
       select.attr("name", "iv-" + i);
       select.find("option")[0].selected = true;
