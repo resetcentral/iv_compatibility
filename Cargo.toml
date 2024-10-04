@@ -1,5 +1,5 @@
 [package]
-name = "iv_compat"
+name = "iv_compatibility"
 version = "0.1.0"
 edition = "2021"
 
