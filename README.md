@@ -26,7 +26,7 @@ grouped together so as to minimize the total number of IVs used.
 - Create `conf.d/db.conf` using [conf.d/db.conf.example](conf.d/db.conf.example) as a guide
 
 ### Import IV compatibility data
-- IV compatibility data can be imported with `cargo run --bin importer /path/to/file.csv`
+- IV compatibility data can be imported with `cargo run --bin importer -- /path/to/file.csv`
 - The CSV file should have the following format (use [docs/data_example.csv](docs/data_example.csv) as a guide)
   - The first line is the header which is two empty values followed by a list of names of all the drugs/solutions to be imported
   ```

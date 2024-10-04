@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use configparser::ini::Ini;
 use mysql::*;
 use mysql::prelude::*;
+use std::env;
 
 #[derive(Debug)]
 struct InfusionInput<'a> {
@@ -77,7 +78,13 @@ fn connect_db() -> PooledConn {
 }
 
 fn main() {
-    let file: File = File::open("./data.csv").expect("Couldn't open file!");
+    let args: Vec<String> = env::args().collect();
+    if args.len() != 2 {
+        println!("Usage: importer FILE");
+        return;
+    }
+    let filename = &args[1];
+    let file: File = File::open(filename).expect("Couldn't open file!");
     let lines = io::BufReader::new(file).lines();
     let mut lines = lines.map(|line| { line.expect("Couldn't read from file!")});
     let headers = lines.next().expect("No data in file!");
