@@ -1,0 +1,5 @@
+[db]
+host = my.database.local
+db_name = iv_compatibility
+user = iv_compat
+password = REDACTED
