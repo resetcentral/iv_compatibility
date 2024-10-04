@@ -1,5 +1,5 @@
 use itertools::Itertools;
-use iv_compat::solver::CompatibilityProblem;
+use solver::CompatibilityProblem;
 use serde::{Deserialize, Serialize};
 
 use mysql::{Pool, PooledConn};
@@ -17,7 +17,9 @@ use minijinja::{Environment, context};
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use iv_compat::db;
+pub mod db;
+pub mod infusion;
+pub mod solver;
 
 async fn handler_home(state: State<Arc<AppState>>) -> Result<Html<String>, StatusCode> {
     #[derive(Serialize, Deserialize, Debug)]
